@@ -38,7 +38,7 @@ module mcp9808#(
              MAN_ID_REG = 4'b0110, //Manufacturer ID registe
              DEV_ID_REG = 4'b0111, //Device ID/Revision register
             RESOLTN_REG = 4'b1000; //Resolution register
-  localparam I2C_ADDR = {4'b0011, SLAVE_ADD};
+  localparam I2C_FADDR = 4'b0011; //fixed part of I2C address
   localparam I2C_READY = 3'b000,
              I2C_START = 3'b001,
              I2C_ADDRS = 3'b011,
@@ -48,9 +48,10 @@ module mcp9808#(
           I2C_READ_ACK = 3'b101,
               I2C_STOP = 3'b100;
   //I2C state & I2C state control
-  reg [2:0] I2C_state; //TODO
+  reg [2:0] I2C_state;
   wire I2C_done; //TODO
   wire I2CinReady, I2CinStart, I2CinAddrs, I2CinWrite, I2CinWriteAck, I2CinRead, I2CinReadAck, I2CinStop, I2CinAck;
+  wire readNwrite;
   //Module State
   localparam SHUTDOWN = 3'b110,
                  IDLE = 3'b000,
@@ -59,6 +60,7 @@ module mcp9808#(
             READ_TEMP = 3'b010,
           SET_T_BOUND = 3'b001;     
   reg [2:0] state;
+  wire inSHUTDOWN, inIDLE, inCONFIG, inCH_RES, inREAD_TEMP, inSET_T_BOUND;
   wire chRes; //Change resolution 
   //Temperature Register write control
   localparam T_CRIT = 2'b11,
@@ -79,6 +81,7 @@ module mcp9808#(
   wire SCL_claim; //TODO
   wire SDA_claim; //TODO
   wire SDA_write; //TODO
+  reg SDA_d_i2c;
 
   //Local config
   reg [1:0] res; //TODO
@@ -89,15 +92,15 @@ module mcp9808#(
   wire I2C_startCond, I2C_stopCond;
 
   //Decode I2C state
-  assign I2CinReady = (I2C_state == I2C_READY);
-  assign I2CinStart = (I2C_state == I2C_START);
-  assign I2CinAddrs = (I2C_state == I2C_ADDRS);
-  assign I2CinWrite = (I2C_state == I2C_WRITE);
+  assign     I2CinRead = (I2C_state == I2C_READ);
+  assign     I2CinStop = (I2C_state == I2C_STOP);
+  assign    I2CinReady = (I2C_state == I2C_READY);
+  assign    I2CinStart = (I2C_state == I2C_START);
+  assign    I2CinAddrs = (I2C_state == I2C_ADDRS);
+  assign    I2CinWrite = (I2C_state == I2C_WRITE);
+  assign  I2CinReadAck = (I2C_state == I2C_READ_ACK);
   assign I2CinWriteAck = (I2C_state == I2C_WRITE_ACK);
-  assign I2CinRead = (I2C_state == I2C_READ);
-  assign I2CinReadAck = (I2C_state == I2C_READ_ACK);
-  assign I2CinStop = (I2C_state == I2C_STOP);
-  assign I2CinAck = I2CinWriteAck | I2CinReadAck;
+  assign      I2CinAck = I2CinWriteAck | I2CinReadAck;
 
   //State control
   assign writeTemp = (T_write != NO_T);
@@ -151,22 +154,34 @@ module mcp9808#(
           endcase
         end
     end
+    
+  //Decode states
+  assign        inIDLE = (state == IDLE);
+  assign      inCONFIG = (state == CONFIG);
+  assign      inCH_RES = (state == CH_RES);
+  assign    inSHUTDOWN = (state == SHUTDOWN);
+  assign   inREAD_TEMP = (state == READ_TEMP);
+  assign inSET_T_BOUND = (state == SET_T_BOUND);
 
   //Tri-state control for I2C lines
   assign SCL = (SCL_claim) ?    SCLK   : 1'bZ;
   assign SDA = (SDA_claim) ? SDA_write : 1'bZ;
 
-  //Delay I2C & Edge detect
+  //SDA handling
   always @(posedge clk) 
     begin
       SDA_d <= SDA;
     end
+  always@(negedge clkI2Cx2)
+    begin
+      SDA_d_i2c <= SDA;
+    end
 
   //Listen I2C Bus & cond. gen.
-  assign SDA_negedge = ~SDA &  SDA_d;
-  assign SDA_posedge =  SDA & ~SDA_d;
-  assign I2C_startCond = SCL & SDA_negedge;
-  assign I2C_stopCond  = SCL & SDA_posedge;
+  assign   SDA_negedge = ~SDA &  SDA_d;
+  assign   SDA_posedge =  SDA & ~SDA_d;
+  assign I2C_startCond =  SCL & SDA_negedge;
+  assign I2C_stopCond  =  SCL & SDA_posedge;
   //Determine if an other master is using the bus
   always@(posedge clk or posedge rst)
     begin
@@ -184,6 +199,52 @@ module mcp9808#(
             1'b1:
               begin
                 I2C_busy <= ~I2C_stopCond;
+              end
+          endcase
+        end
+    end
+  
+  //I2C state transactions
+  always@(negedge clkI2Cx2 or posedge rst)
+    begin
+      if(rst)
+        begin
+          I2C_state <= I2C_READY;
+        end
+      else
+        begin
+          case(I2C_state)
+            I2C_READY:
+              begin
+                I2C_state <= (~(inIDLE | inSHUTDOWN) & SCLK) ? I2C_START : I2C_state;
+              end
+            I2C_START:
+              begin
+                I2C_state <= (~SCL) ? I2C_ADDRS : I2C_state;
+              end
+            I2C_ADDRS:
+              begin
+                I2C_state <= (~SCL & bitCountDone) ? I2C_WRITE_ACK : I2C_state;
+              end
+            I2C_WRITE_ACK:
+              begin
+                I2C_state <= (~SCL) ? ((~SDA_d_i2c & ~byteCountDone) ? ((~readNwrite) ? I2C_WRITE : I2C_READ): I2C_STOP) : I2C_state;
+              end
+            I2C_WRITE:
+              begin
+                I2C_state <= (~SCL & bitCountDone) ? I2C_WRITE_ACK : I2C_state;
+              end
+            I2C_READ:
+              begin
+                I2C_state <= (~SCL & bitCountDone) ? I2C_READ_ACK : I2C_state;
+              end
+            I2C_READ_ACK:
+              begin
+                I2C_state <= (~SCL) ? ((byteCountDone) ? I2C_STOP : I2C_READ) : I2C_state;
+              end
+            I2C_STOP:
+              begin
+                I2C_state <= (SCL) ? I2C_READY : I2C_state;
               end
           endcase
         end
@@ -207,10 +268,10 @@ module mcp9808#(
   always@(posedge SCL) 
     begin
       case(I2C_state)
-        I2C_ADDR: bitCounter <= bitCounter + 3'd1;
+        I2C_ADDRS: bitCounter <= bitCounter + 3'd1;
         I2C_WRITE: bitCounter <= bitCounter + 3'd1;
-        I2C_READ: bitCounter <= bitCounter + 3'd1;
-        default: bitCounter <= 3'd0;
+         I2C_READ: bitCounter <= bitCounter + 3'd1;
+          default: bitCounter <= 3'd0;
       endcase
     end
 
