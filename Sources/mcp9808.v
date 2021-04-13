@@ -13,11 +13,11 @@
  *     v1      : Inital version                     *
  * ------------------------------------------------ */
 // ! use MCP4725 as template 
-module mcp9808#(
-  parameter SLAVE_ADD = 3'd000)( // ? address pins to input port
+module mcp9808(
   input clk,
   input rst,
-  input clkI2Cx2, //TODO
+  input clkI2Cx2,
+  input [2:0] addressPins,
   //I2C pins
   inout SCL/* synthesis keep = 1 */,
   inout SDA/* synthesis keep = 1 */,
@@ -27,8 +27,8 @@ module mcp9808#(
   input [1:0] T_write, //TODO
   input [1:0] res_i, //TODO
   input shutdown, //?: Use a register to keep it stable  
-  input update, //TODO
-  output ready); //TODO
+  input update,
+  output ready);
   //Module registers
   localparam CONFIG_REG = 4'b0001, //Configuration Register
             T_UPPER_REG = 4'b0010, //Alert Temperature Upper Boundary Trip register
@@ -49,18 +49,20 @@ module mcp9808#(
               I2C_STOP = 3'b100;
   //I2C state & I2C state control
   reg [2:0] I2C_state;
-  wire I2C_done; //TODO
+  wire I2C_done;
   wire I2CinReady, I2CinStart, I2CinAddrs, I2CinWrite, I2CinWriteAck, I2CinRead, I2CinReadAck, I2CinStop, I2CinAck;
   wire readNwrite;
+  wire [6:0] I2CAddress;
   //Module State
-  localparam SHUTDOWN = 3'b110,
-                 IDLE = 3'b000,
-               CONFIG = 3'b100,
-               CH_RES = 3'b011,
-            READ_TEMP = 3'b010,
-          SET_T_BOUND = 3'b001;     
+  localparam SHUTDOWN = 3'b110, //Steady state for shutdown
+                 IDLE = 3'b000, //Steady state
+               CONFIG = 3'b100, //Write config reg
+               CH_RES = 3'b011, //Write res reg
+             TEMP_PTR = 3'b001, //Write Amb Temp pointer for read
+            READ_TEMP = 3'b010, //Read Amb Temp reg
+          SET_T_BOUND = 3'b111; //Write Temp boundry reg  
   reg [2:0] state;
-  wire inSHUTDOWN, inIDLE, inCONFIG, inCH_RES, inREAD_TEMP, inSET_T_BOUND;
+  wire inSHUTDOWN, inIDLE, inCONFIG, inCH_RES, inREAD_TEMP, inSET_T_BOUND, inTEMP_PRT;
   wire chRes; //Change resolution 
   //Temperature Register write control
   localparam T_CRIT = 2'b11,
@@ -69,22 +71,28 @@ module mcp9808#(
                NO_T = 2'b00;
   wire writeTemp;
   //Transmisson counters
-  reg [1:0] byteCounter;
+  reg [2:0] byteCounter;
   reg [2:0] bitCounter;
-  reg byteCountDone; //TODO
+  reg byteCountDone;
   wire bitCountDone;
 
   reg I2C_busy; //Another master is using I2C
 
   //Generate I2C signals with tri-state
   reg SCLK; //Internal I2C clock, always thicks
-  wire SCL_claim; //TODO
-  wire SDA_claim; //TODO
+  wire SCL_claim;
+  wire SDA_claim;
   wire SDA_write; //TODO
   reg SDA_d_i2c;
 
   //Local config
-  reg [1:0] res; //TODO
+  reg [1:0] res;
+
+  //Signalling, change inputs only when set
+  assign ready = I2CinRead & (inSHUTDOWN | inIDLE);
+
+  //Get I2C address
+  assign I2CAddress = {I2C_FADDR, addressPins};
 
   //Delay I2C signals, finding edges and conditions
   reg SDA_d;
@@ -105,6 +113,7 @@ module mcp9808#(
   //State control
   assign writeTemp = (T_write != NO_T);
   assign chRes = (res != res_i);
+  assign I2C_done = I2CinStop;
   always@(posedge clk or posedge rst)
     begin
       if(rst)
@@ -123,7 +132,7 @@ module mcp9808#(
                 else if(chRes)
                   state <= CH_RES;
                 else if(update)
-                  state <= READ_TEMP;
+                  state <= TEMP_PTR;
                 else
                   state <= state;
               end
@@ -138,6 +147,10 @@ module mcp9808#(
             CH_RES:
               begin
                 state <= (I2C_done) ? IDLE : state;
+              end
+            TEMP_PTR:
+              begin
+                state <= (I2C_done) ? READ_TEMP : state;
               end
             READ_TEMP:
               begin
@@ -160,12 +173,28 @@ module mcp9808#(
   assign      inCONFIG = (state == CONFIG);
   assign      inCH_RES = (state == CH_RES);
   assign    inSHUTDOWN = (state == SHUTDOWN);
+  assign    inTEMP_PRT = (state == TEMP_PTR);
   assign   inREAD_TEMP = (state == READ_TEMP);
   assign inSET_T_BOUND = (state == SET_T_BOUND);
 
   //Tri-state control for I2C lines
   assign SCL = (SCL_claim) ?    SCLK   : 1'bZ;
   assign SDA = (SDA_claim) ? SDA_write : 1'bZ;
+  assign SCL_claim = ~I2CinReady;
+  assign SDA_claim = I2CinStart | I2CinAddrs | I2CinWrite | I2CinReadAck | I2CinStop;
+
+  //Store resulution config, power on value 0x3
+    always@(posedge inCH_RES or posedge rst)
+      begin
+        if(rst)
+          begin
+            res <= res_i;
+          end
+        else
+          begin
+            res <= res_i;
+          end
+      end
 
   //SDA handling
   always @(posedge clk) 
@@ -194,11 +223,11 @@ module mcp9808#(
           case(I2C_busy)
             1'b0:
               begin
-                I2C_busy <= I2C_startCond;
+                I2C_busy <= I2C_startCond & I2CinReady;
               end
             1'b1:
               begin
-                I2C_busy <= ~I2C_stopCond;
+                I2C_busy <= ~I2C_stopCond & I2CinReady;
               end
           endcase
         end
@@ -216,7 +245,7 @@ module mcp9808#(
           case(I2C_state)
             I2C_READY:
               begin
-                I2C_state <= (~(inIDLE | inSHUTDOWN) & SCLK) ? I2C_START : I2C_state;
+                I2C_state <= (~(inIDLE | inSHUTDOWN) & SCLK & ~I2C_busy) ? I2C_START : I2C_state;
               end
             I2C_START:
               begin
@@ -255,12 +284,25 @@ module mcp9808#(
     begin
       if(I2CinStart)
         begin
-          byteCounter <= 2'd0;
+          byteCounter <= 3'd0;
         end
       else
         begin
-          byteCounter <= byteCounter + 2'd1;
+          byteCounter <= byteCounter + 3'd1;
         end
+    end
+  
+  //I2C byte counter done
+  always@*
+    begin
+      case(state)
+        CONFIG: byteCountDone = (byteCounter == 3'd4);
+        CH_RES: byteCountDone = (byteCounter == 3'd3);
+        TEMP_PTR: byteCountDone = (byteCounter == 3'd2);
+        READ_TEMP: byteCountDone = (byteCounter == 3'd3);
+        SET_T_BOUND: byteCountDone = (byteCounter == 3'd4);
+        default: byteCountDone = 1'b1;
+      endcase
     end
 
   //I2C bit counter
