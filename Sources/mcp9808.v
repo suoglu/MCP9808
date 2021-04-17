@@ -4,7 +4,7 @@
  * ------------------------------------------------ *
  * File        : mcp9808.v                          *
  * Author      : Yigit Suoglu                       *
- * Last Edit   : //2021                         *
+ * Last Edit   : 17/04/2021                         *
  * ------------------------------------------------ *
  * Description : Interface module for MCP9808       *
  *               temperature sensor                 *
@@ -12,7 +12,6 @@
  * Revisions                                        *
  *     v1      : Inital version                     *
  * ------------------------------------------------ */
-// ! use MCP4725 as template 
 module mcp9808(
   input clk,
   input rst,
@@ -22,10 +21,12 @@ module mcp9808(
   inout SCL/* synthesis keep = 1 */,
   inout SDA/* synthesis keep = 1 */,
   //GPIO
-  output [10:0] T_o, //TODO
-  input [10:0] T_i, //TODO
-  input [1:0] T_write, //TODO
-  input [1:0] res_i, //TODO
+  output [11:0] tempVal,
+  output tempSign,
+  output [2:0] tempComp,
+  input [10:0] tempInput,
+  input [1:0] tempWrite,
+  input [1:0] res_i,
   input shutdown, //?: Use a register to keep it stable  
   input update,
   output ready);
@@ -78,11 +79,17 @@ module mcp9808(
 
   reg I2C_busy; //Another master is using I2C
 
+  //I2C data control
+  reg [7:0] SDAsend, SDAsend_write;
+  reg [15:0] SDAreceive;
+  reg [15:0] temp;
+  wire SDAshift, SDAupdate;
+
   //Generate I2C signals with tri-state
   reg SCLK; //Internal I2C clock, always thicks
   wire SCL_claim;
   wire SDA_claim;
-  wire SDA_write; //TODO
+  wire SDA_write;
   reg SDA_d_i2c;
 
   //Local config
@@ -111,10 +118,11 @@ module mcp9808(
   assign      I2CinAck = I2CinWriteAck | I2CinReadAck;
 
   //State control
-  assign writeTemp = (T_write != NO_T);
+  assign writeTemp = (tempWrite != NO_T);
   assign chRes = (res != res_i);
   assign I2C_done = I2CinStop;
-  always@(posedge clk or posedge rst)
+  assign readNwrite = inREAD_TEMP;
+  always@(posedge clk or posedge rst) //state ch
     begin
       if(rst)
         begin
@@ -132,7 +140,7 @@ module mcp9808(
                 else if(chRes)
                   state <= CH_RES;
                 else if(update)
-                  state <= TEMP_PTR;
+                  state <= READ_TEMP;
                 else
                   state <= state;
               end
@@ -142,15 +150,15 @@ module mcp9808(
               end
             CONFIG:
               begin
-                state <= (I2C_done) ? ((shutdown) ? SHUTDOWN : IDLE) : state;
+                state <= (I2C_done) ? ((shutdown) ? SHUTDOWN : TEMP_PTR) : state;
               end
             CH_RES:
               begin
-                state <= (I2C_done) ? IDLE : state;
+                state <= (I2C_done) ? TEMP_PTR : state;
               end
             TEMP_PTR:
               begin
-                state <= (I2C_done) ? READ_TEMP : state;
+                state <= (I2C_done) ? IDLE : state;
               end
             READ_TEMP:
               begin
@@ -158,7 +166,7 @@ module mcp9808(
               end
             SET_T_BOUND:
               begin
-                state <= (I2C_done) ? IDLE : state;
+                state <= (I2C_done) ? TEMP_PTR : state;
               end
             default:
               begin
@@ -182,8 +190,9 @@ module mcp9808(
   assign SDA = (SDA_claim) ? SDA_write : 1'bZ;
   assign SCL_claim = ~I2CinReady;
   assign SDA_claim = I2CinStart | I2CinAddrs | I2CinWrite | I2CinReadAck | I2CinStop;
+  assign SDA_write = (I2CinStart | I2CinReadAck | I2CinStop) ? 1'd0 : SDAsend[7];
 
-  //Store resulution config, power on value 0x3
+  //Store resolution config, power on value 0x3
     always@(posedge inCH_RES or posedge rst)
       begin
         if(rst)
@@ -196,6 +205,24 @@ module mcp9808(
           end
       end
 
+  //Ambiant temp handle
+  assign {tempComp,tempSign,tempVal} = temp; //decode temp reg
+  always@(posedge clk or posedge rst) //update temp reg from receive buffer
+    begin
+      if(rst)
+        begin
+          temp <= 16'h0;
+        end
+      else
+        begin
+          temp <= (I2CinStop & inREAD_TEMP) ? SDAreceive : temp;
+        end
+    end
+  always@(posedge SCL) //fill receive buffer
+    begin
+      SDAreceive <= (I2CinRead) ? {SDAreceive[15:0], SDA} : SDAreceive;
+    end
+
   //SDA handling
   always @(posedge clk) 
     begin
@@ -205,12 +232,72 @@ module mcp9808(
     begin
       SDA_d_i2c <= SDA;
     end
+  
+  //SDA send buffer
+  always@(negedge clkI2Cx2)
+    begin
+      if(SDAupdate)
+        SDAsend <= SDAsend_write;
+      else if(SDAshift & ~SCL & |bitCounter)
+        SDAsend <= {SDAsend << 1};
+    end
+    assign SDAupdate = I2CinStart | I2CinWriteAck;
+    assign SDAshift = I2CinAddrs | I2CinWrite;
+
+  //Determine what to send
+  always@*
+    begin
+      case(byteCounter)
+        3'd0:
+          begin
+            SDAsend_write = {I2CAddress,readNwrite};
+          end
+        3'd1:
+          case(state)
+            CONFIG: SDAsend_write = {4'h0, CONFIG_REG};
+            CH_RES: SDAsend_write = {4'h0, RESOLTN_REG};
+            TEMP_PTR: SDAsend_write = {4'h0, TEMP_REG};
+            SET_T_BOUND: 
+              case(tempWrite)
+                T_UPPR:
+                  begin
+                    SDAsend_write = {4'h0, T_UPPER_REG};
+                  end
+                T_LOWR:
+                  begin
+                    SDAsend_write = {4'h0, T_LOWER_REG};
+                  end
+                default:
+                  begin
+                    SDAsend_write = {4'h0, T_CRIT_REG};
+                  end
+              endcase
+            default: SDAsend_write = 8'd0;
+          endcase
+        3'd2:
+          case(state)
+            CONFIG: SDAsend_write = {5'h0, 2'b0, shutdown};
+            CH_RES: SDAsend_write = {6'h0, res};
+            SET_T_BOUND: SDAsend_write = {3'h0, tempInput[10:6]};
+            default: SDAsend_write = 8'd0;
+          endcase
+        3'd3:
+          case(state)
+            CONFIG: SDAsend_write = {4'h0,4'h0};
+            SET_T_BOUND: SDAsend_write = {tempInput[5:0],2'h0};
+            default: SDAsend_write = 8'd0;
+          endcase
+        default:
+          SDAsend_write = 8'd0;
+      endcase
+    end
 
   //Listen I2C Bus & cond. gen.
   assign   SDA_negedge = ~SDA &  SDA_d;
   assign   SDA_posedge =  SDA & ~SDA_d;
   assign I2C_startCond =  SCL & SDA_negedge;
   assign I2C_stopCond  =  SCL & SDA_posedge;
+
   //Determine if an other master is using the bus
   always@(posedge clk or posedge rst)
     begin
