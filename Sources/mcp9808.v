@@ -71,6 +71,7 @@ module mcp9808(
              T_LOWR = 2'b01,
                NO_T = 2'b00;
   wire writeTemp;
+  reg [1:0] tempWrite_reg;
   //Transmisson counters
   reg [2:0] byteCounter;
   reg [2:0] bitCounter;
@@ -96,7 +97,7 @@ module mcp9808(
   reg [1:0] res;
 
   //Signalling, change inputs only when set
-  assign ready = I2CinRead & (inSHUTDOWN | inIDLE);
+  assign ready = I2CinReady & (inSHUTDOWN | inIDLE);
 
   //Get I2C address
   assign I2CAddress = {I2C_FADDR, addressPins};
@@ -204,6 +205,13 @@ module mcp9808(
             res <= res_i;
           end
       end
+    always@(posedge inSET_T_BOUND or posedge rst)
+      begin
+        if(rst)
+          tempWrite_reg <= NO_T;
+        else
+          tempWrite_reg <= tempWrite;
+      end
 
   //Ambiant temp handle
   assign {tempComp,tempSign,tempVal} = temp; //decode temp reg
@@ -258,7 +266,7 @@ module mcp9808(
             CH_RES: SDAsend_write = {4'h0, RESOLTN_REG};
             TEMP_PTR: SDAsend_write = {4'h0, TEMP_REG};
             SET_T_BOUND: 
-              case(tempWrite)
+              case(tempWrite_reg)
                 T_UPPR:
                   begin
                     SDAsend_write = {4'h0, T_UPPER_REG};
