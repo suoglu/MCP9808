@@ -8,10 +8,9 @@
 4. Test
 5. Status Information
 6. Possible Improvements
-7. Issues
 
-[![Repo on GitLab](https://img.shields.io/badge/repo-GitLab-6C488A.svg)](LINK)
-[![Repo on GitHub](https://img.shields.io/badge/repo-GitHub-3D76C2.svg)](LINK)
+[![Repo on GitLab](https://img.shields.io/badge/repo-GitLab-6C488A.svg)](https://gitlab.com/suoglu/mcp9808)
+[![Repo on GitHub](https://img.shields.io/badge/repo-GitHub-3D76C2.svg)](https://github.com/suoglu/MCP9808)
 
 ---
 
@@ -61,8 +60,14 @@ I: Input  O: Output
 
 ## Test
 
-INFO ABOUT TEST CODE
+### Test 1 (20 April 2021)
+
+Module tested on [testboard.v](Test/testboard.v). Right button used to read a new measurement result, and left button used to initiate a new boundry write. Left most switch is used for shutdown mode, following two switches used to select which boundary register to write, following two switches used to change resolution and remaining switches used as temperature input. Read temperature measurement displayed on seven segment display. I²C pins connected to JB header. During testing, I²C signals monitored via [Digilent Digital Discovery](https://reference.digilentinc.com/reference/instrumentation/digital-discovery/start). Reading temperature measurement result, writing to boundary registers, shutdown mode and changing measurement resolution tested.
 
 ## Status Information
 
-**Last Test:** -
+**Last Test:** 20 April 2021, on [Digilent Basys 3](https://reference.digilentinc.com/reference/programmable-logic/basys-3/reference-manual).
+
+## Possible Improvements
+
+- Implement more functionality, e.g. alert configurations

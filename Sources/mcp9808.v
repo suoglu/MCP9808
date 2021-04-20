@@ -4,7 +4,7 @@
  * ------------------------------------------------ *
  * File        : mcp9808.v                          *
  * Author      : Yigit Suoglu                       *
- * Last Edit   : 17/04/2021                         *
+ * Last Edit   : 20/04/2021                         *
  * ------------------------------------------------ *
  * Description : Interface module for MCP9808       *
  *               temperature sensor                 *
