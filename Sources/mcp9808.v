@@ -52,6 +52,7 @@ module mcp9808(
   reg [2:0] I2C_state;
   wire I2C_done;
   wire I2CinReady, I2CinStart, I2CinAddrs, I2CinWrite, I2CinWriteAck, I2CinRead, I2CinReadAck, I2CinStop, I2CinAck;
+  reg I2CinStop_d;
   wire readNwrite;
   wire [6:0] I2CAddress;
   //Module State
@@ -121,7 +122,7 @@ module mcp9808(
   //State control
   assign writeTemp = (tempWrite != NO_T);
   assign chRes = (res != res_i);
-  assign I2C_done = I2CinStop;
+  assign I2C_done = I2CinStop & ~I2CinStop_d;
   assign readNwrite = inREAD_TEMP;
   always@(posedge clk or posedge rst) //state ch
     begin
@@ -235,6 +236,7 @@ module mcp9808(
   always @(posedge clk) 
     begin
       SDA_d <= SDA;
+      I2CinStop_d <= I2CinStop;
     end
   always@(negedge clkI2Cx2)
     begin

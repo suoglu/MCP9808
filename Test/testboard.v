@@ -21,7 +21,7 @@ module board(
   input btnR, //update
   input btnL, //write temp
   input shutdown, //sw15
-  input [10:0] sw, //Temp in
+  input [14:0] sw, //Temp in
   //I2C
   inout SCL/* synthesis keep = 1 */, //JB3
   inout SDA/* synthesis keep = 1 */, //JB4
@@ -42,16 +42,16 @@ module board(
   wire tempWReq;
   reg tempWReg;
 
-  mcp9808 uut(clk,rst,clkI2Cx2,addrsPins,SCL,SDA,tempVal,tempSign,tempComp,tempInput,tempWrite,res,shutdown,update,ready);
+  mcp9808 uut(clk,rst,clkI2Cx2,addrsPins,SCL,SDA,tempVal,tempSign,tempComp,tempInput,tempWrite,sw[12:11],shutdown,update,ready);
 
   //I/O controllers & logic
   ssdController4 ssdcntr(clk, rst, 4'b1111, {tempComp,tempSign},tempVal[11:8], tempVal[7:4], tempVal[3:0], seg, an);
   debouncer db_R(clk, rst, btnR, update);
   debouncer db_L(clk, rst, btnL, tempWReq);
   
-  assign tempInput = sw;
+  assign tempInput = sw[10:0];
 
-  assign tempWrite = (tempWReg) ? 2'b10 : 2'b00; //Upper : No write
+  assign tempWrite = (tempWReg) ? sw[14:13] : 2'b00; //test : No write
 
   always@(posedge clk) //Regsiter temp write
     begin
