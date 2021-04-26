@@ -393,12 +393,12 @@ module mcp9808(
   always@*
     begin
       case(state)
-        CONFIG: byteCountDone = (byteCounter == 3'd4);
-        CH_RES: byteCountDone = (byteCounter == 3'd3);
-        TEMP_PTR: byteCountDone = (byteCounter == 3'd2);
-        READ_TEMP: byteCountDone = (byteCounter == 3'd3);
+        CONFIG:      byteCountDone = (byteCounter == 3'd4);
+        CH_RES:      byteCountDone = (byteCounter == 3'd3);
+        TEMP_PTR:    byteCountDone = (byteCounter == 3'd2);
+        READ_TEMP:   byteCountDone = (byteCounter == 3'd3);
         SET_T_BOUND: byteCountDone = (byteCounter == 3'd4);
-        default: byteCountDone = 1'b1;
+        default:     byteCountDone = 1'b1;
       endcase
     end
 
