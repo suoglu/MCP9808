@@ -4,7 +4,7 @@
  * ------------------------------------------------ *
  * File        : mcp9808.v                          *
  * Author      : Yigit Suoglu                       *
- * Last Edit   : 20/04/2021                         *
+ * Last Edit   : 04/12/2021                         *
  * ------------------------------------------------ *
  * Description : Interface module for MCP9808       *
  *               temperature sensor                 *
@@ -52,7 +52,7 @@ module mcp9808(
   reg [2:0] I2C_state;
   wire I2C_done;
   wire I2CinReady, I2CinStart, I2CinAddrs, I2CinWrite, I2CinWriteAck, I2CinRead, I2CinReadAck, I2CinStop, I2CinAck;
-  reg I2CinStop_d;
+  reg I2CinStop_d, I2CinAck_d;
   wire readNwrite;
   wire [6:0] I2CAddress;
   //Module State
@@ -104,8 +104,8 @@ module mcp9808(
   assign I2CAddress = {I2C_FADDR, addressPins};
 
   //Delay I2C signals, finding edges and conditions
-  reg SDA_d;
-  wire SDA_posedge, SDA_negedge;
+  reg SDA_d, SCL_d, clkI2Cx2_d;
+  wire SDA_posedge, SDA_negedge, SCL_posedge, clkI2Cx2_negedge, clkI2Cx2_posedge;
   wire I2C_startCond, I2C_stopCond;
 
   //Decode I2C state
@@ -119,64 +119,38 @@ module mcp9808(
   assign I2CinWriteAck = (I2C_state == I2C_WRITE_ACK);
   assign      I2CinAck = I2CinWriteAck | I2CinReadAck;
 
+  wire I2CinAck_posedge =  I2CinAck & ~I2CinAck_d;
+
   //State control
   assign writeTemp = (tempWrite != NO_T);
   assign chRes = (res != res_i);
   assign I2C_done = I2CinStop & ~I2CinStop_d;
   assign readNwrite = inREAD_TEMP;
-  always@(posedge clk or posedge rst) //state ch
-    begin
-      if(rst)
-        begin
-          state <= IDLE;
-        end
-      else
-        begin
-          case(state)
-            IDLE:
-              begin
-                if(shutdown)
-                  state <= CONFIG;
-                else if(writeTemp)
-                  state <= SET_T_BOUND;
-                else if(chRes)
-                  state <= CH_RES;
-                else if(update)
-                  state <= READ_TEMP;
-                else
-                  state <= state;
-              end
-            SHUTDOWN:
-              begin
-                state <= (shutdown) ? state : CONFIG;
-              end
-            CONFIG:
-              begin
-                state <= (I2C_done) ? ((shutdown) ? SHUTDOWN : TEMP_PTR) : state;
-              end
-            CH_RES:
-              begin
-                state <= (I2C_done) ? TEMP_PTR : state;
-              end
-            TEMP_PTR:
-              begin
-                state <= (I2C_done) ? IDLE : state;
-              end
-            READ_TEMP:
-              begin
-                state <= (I2C_done) ? IDLE : state;
-              end
-            SET_T_BOUND:
-              begin
-                state <= (I2C_done) ? TEMP_PTR : state;
-              end
-            default:
-              begin
-                state <= IDLE;
-              end
-          endcase
-        end
-    end
+  always@(posedge clk or posedge rst) begin //state ch
+    if(rst) begin
+      state <= IDLE;
+    end else case(state)
+      IDLE: begin
+        if(shutdown)
+          state <= CONFIG;
+        else if(writeTemp)
+          state <= SET_T_BOUND;
+        else if(chRes)
+          state <= CH_RES;
+        else if(update)
+          state <= READ_TEMP;
+        else
+          state <= state;
+      end
+      SHUTDOWN    : state <= (shutdown) ? state : CONFIG;
+      CONFIG      : state <= (I2C_done) ? ((shutdown) ? SHUTDOWN : TEMP_PTR) : state;
+      CH_RES      : state <= (I2C_done) ? TEMP_PTR : state;
+      TEMP_PTR    : state <= (I2C_done) ? IDLE : state;
+      READ_TEMP   : state <= (I2C_done) ? IDLE : state;
+      SET_T_BOUND : state <= (I2C_done) ? TEMP_PTR : state;
+      default     : state <= IDLE;
+    endcase
+  end
     
   //Decode states
   assign        inIDLE = (state == IDLE);
@@ -195,235 +169,154 @@ module mcp9808(
   assign SDA_write = (I2CinStart | I2CinReadAck | I2CinStop) ? 1'd0 : SDAsend[7];
 
   //Store resolution config, power on value 0x3
-    always@(posedge inCH_RES or posedge rst)
-      begin
-        if(rst)
-          begin
-            res <= res_i;
-          end
-        else
-          begin
-            res <= res_i;
-          end
-      end
-    always@(posedge inSET_T_BOUND or posedge rst)
-      begin
-        if(rst)
-          tempWrite_reg <= NO_T;
-        else
-          tempWrite_reg <= tempWrite;
-      end
+  always@(posedge inCH_RES or posedge rst) begin
+    if(inCH_RES | rst)
+      res <= res_i;
+  end
+  always@(posedge inSET_T_BOUND or posedge rst)  begin
+    if(rst)
+      tempWrite_reg <= NO_T;
+    else if(inSET_T_BOUND)
+      tempWrite_reg <= tempWrite;
+  end
 
   //Ambiant temp handle
   assign {tempComp,tempSign,tempVal} = temp; //decode temp reg
-  always@(posedge clk or posedge rst) //update temp reg from receive buffer
-    begin
-      if(rst)
-        begin
-          temp <= 16'h0;
-        end
-      else
-        begin
-          temp <= (I2CinStop & inREAD_TEMP) ? SDAreceive : temp;
-        end
+  always@(posedge clk or posedge rst) begin //update temp reg from receive buffer
+    if(rst) begin
+      temp <= 16'h0;
+    end else begin
+      temp <= (I2CinStop & inREAD_TEMP) ? SDAreceive : temp;
     end
-  always@(posedge SCL) //fill receive buffer
-    begin
-      SDAreceive <= (I2CinRead) ? {SDAreceive[15:0], SDA} : SDAreceive;
-    end
+  end
+  always@(posedge clk) begin//fill receive buffer
+    SDAreceive <= (I2CinRead & SCL_posedge) ? {SDAreceive[15:0], SDA} : SDAreceive;
+  end
 
   //SDA handling
-  always @(posedge clk) 
+  always@(posedge clk) 
     begin
       SDA_d <= SDA;
+      SCL_d <= SCL;
+      clkI2Cx2_d <= clkI2Cx2;
       I2CinStop_d <= I2CinStop;
-    end
-  always@(negedge clkI2Cx2)
-    begin
-      SDA_d_i2c <= SDA;
+      SDA_d_i2c <= (clkI2Cx2_negedge) ? SDA : SDA_d_i2c;
+      I2CinAck_d <= I2CinAck;
     end
   
   //SDA send buffer
-  always@(negedge clkI2Cx2)
-    begin
+  always@(posedge clk) begin
+    if(clkI2Cx2_negedge) begin
       if(SDAupdate)
         SDAsend <= SDAsend_write;
       else if(SDAshift & ~SCL & |bitCounter)
         SDAsend <= {SDAsend << 1};
     end
-    assign SDAupdate = I2CinStart | I2CinWriteAck;
-    assign SDAshift = I2CinAddrs | I2CinWrite;
+  end
+  assign SDAupdate = I2CinStart | I2CinWriteAck;
+  assign SDAshift = I2CinAddrs | I2CinWrite;
 
   //Determine what to send
   always@*
-    begin
-      case(byteCounter)
-        3'd0:
-          begin
-            SDAsend_write = {I2CAddress,readNwrite};
-          end
-        3'd1:
-          case(state)
-            CONFIG: SDAsend_write = {4'h0, CONFIG_REG};
-            CH_RES: SDAsend_write = {4'h0, RESOLTN_REG};
-            TEMP_PTR: SDAsend_write = {4'h0, TEMP_REG};
-            SET_T_BOUND: 
-              case(tempWrite_reg)
-                T_UPPR:
-                  begin
-                    SDAsend_write = {4'h0, T_UPPER_REG};
-                  end
-                T_LOWR:
-                  begin
-                    SDAsend_write = {4'h0, T_LOWER_REG};
-                  end
-                default:
-                  begin
-                    SDAsend_write = {4'h0, T_CRIT_REG};
-                  end
-              endcase
-            default: SDAsend_write = 8'd0;
-          endcase
-        3'd2:
-          case(state)
-            CONFIG: SDAsend_write = {5'h0, 2'b0, shutdown};
-            CH_RES: SDAsend_write = {6'h0, res};
-            SET_T_BOUND: SDAsend_write = {3'h0, tempInput[10:6]};
-            default: SDAsend_write = 8'd0;
-          endcase
-        3'd3:
-          case(state)
-            CONFIG: SDAsend_write = {4'h0,4'h0};
-            SET_T_BOUND: SDAsend_write = {tempInput[5:0],2'h0};
-            default: SDAsend_write = 8'd0;
-          endcase
-        default:
-          SDAsend_write = 8'd0;
+    case(byteCounter)
+      3'd0: SDAsend_write = {I2CAddress,readNwrite};
+      3'd1: case(state)
+        CONFIG  : SDAsend_write = {4'h0, CONFIG_REG};
+        CH_RES  : SDAsend_write = {4'h0, RESOLTN_REG};
+        TEMP_PTR: SDAsend_write = {4'h0, TEMP_REG};
+        SET_T_BOUND: case(tempWrite_reg)
+          T_UPPR : SDAsend_write = {4'h0, T_UPPER_REG};
+          T_LOWR : SDAsend_write = {4'h0, T_LOWER_REG};
+          default: SDAsend_write = {4'h0, T_CRIT_REG};
+        endcase
+        default: SDAsend_write = 8'd0;
       endcase
-    end
+      3'd2: case(state)
+        CONFIG      : SDAsend_write = {5'h0, 2'b0, shutdown};
+        CH_RES      : SDAsend_write = {6'h0, res};
+        SET_T_BOUND : SDAsend_write = {3'h0, tempInput[10:6]};
+        default     : SDAsend_write = 8'd0;
+      endcase
+      3'd3: case(state)
+        CONFIG      : SDAsend_write = {4'h0,4'h0};
+        SET_T_BOUND : SDAsend_write = {tempInput[5:0],2'h0};
+        default     : SDAsend_write = 8'd0;
+      endcase
+      default: SDAsend_write = 8'd0;
+    endcase
 
   //Listen I2C Bus & cond. gen.
   assign   SDA_negedge = ~SDA &  SDA_d;
   assign   SDA_posedge =  SDA & ~SDA_d;
+  assign   SCL_posedge =  SCL & ~SCL_d;
   assign I2C_startCond =  SCL & SDA_negedge;
   assign I2C_stopCond  =  SCL & SDA_posedge;
+  assign clkI2Cx2_negedge = ~clkI2Cx2 &  clkI2Cx2_d;
+  assign clkI2Cx2_posedge =  clkI2Cx2 & ~clkI2Cx2_d;
 
   //Determine if an other master is using the bus
-  always@(posedge clk or posedge rst)
-    begin
-      if(rst)
-        begin
-          I2C_busy <= 1'b0;
-        end
-      else
-        begin
-          case(I2C_busy)
-            1'b0:
-              begin
-                I2C_busy <= I2C_startCond & I2CinReady;
-              end
-            1'b1:
-              begin
-                I2C_busy <= ~I2C_stopCond & I2CinReady;
-              end
-          endcase
-        end
-    end
+  always@(posedge clk or posedge rst) begin
+    if(rst) begin
+      I2C_busy <= 1'b0;
+    end else case(I2C_busy)
+      1'b0: I2C_busy <= I2C_startCond & I2CinReady;
+      1'b1: I2C_busy <= ~I2C_stopCond & I2CinReady;
+    endcase
+  end
   
   //I2C state transactions
-  always@(negedge clkI2Cx2 or posedge rst)
-    begin
-      if(rst)
-        begin
-          I2C_state <= I2C_READY;
-        end
-      else
-        begin
-          case(I2C_state)
-            I2C_READY:
-              begin
-                I2C_state <= (~(inIDLE | inSHUTDOWN) & SCLK & ~I2C_busy) ? I2C_START : I2C_state;
-              end
-            I2C_START:
-              begin
-                I2C_state <= (~SCL) ? I2C_ADDRS : I2C_state;
-              end
-            I2C_ADDRS:
-              begin
-                I2C_state <= (~SCL & bitCountDone) ? I2C_WRITE_ACK : I2C_state;
-              end
-            I2C_WRITE_ACK:
-              begin
-                I2C_state <= (~SCL) ? ((~SDA_d_i2c & ~byteCountDone) ? ((~readNwrite) ? I2C_WRITE : I2C_READ): I2C_STOP) : I2C_state;
-              end
-            I2C_WRITE:
-              begin
-                I2C_state <= (~SCL & bitCountDone) ? I2C_WRITE_ACK : I2C_state;
-              end
-            I2C_READ:
-              begin
-                I2C_state <= (~SCL & bitCountDone) ? I2C_READ_ACK : I2C_state;
-              end
-            I2C_READ_ACK:
-              begin
-                I2C_state <= (~SCL) ? ((byteCountDone) ? I2C_STOP : I2C_READ) : I2C_state;
-              end
-            I2C_STOP:
-              begin
-                I2C_state <= (SCL) ? I2C_READY : I2C_state;
-              end
-          endcase
-        end
-    end
+  always@(posedge clk or posedge rst) begin
+    if(rst) begin
+      I2C_state <= I2C_READY;
+    end else if(clkI2Cx2_negedge)
+      case(I2C_state)
+        I2C_READY     : I2C_state <= (~(inIDLE | inSHUTDOWN) & SCLK & ~I2C_busy) ? I2C_START : I2C_state;
+        I2C_START     : I2C_state <= (~SCL) ? I2C_ADDRS : I2C_state;
+        I2C_ADDRS     : I2C_state <= (~SCL & bitCountDone) ? I2C_WRITE_ACK : I2C_state;
+        I2C_WRITE_ACK : I2C_state <= (~SCL) ? ((~SDA_d_i2c & ~byteCountDone) ? ((~readNwrite) ? I2C_WRITE : I2C_READ): I2C_STOP) : I2C_state;
+        I2C_WRITE     : I2C_state <= (~SCL & bitCountDone) ? I2C_WRITE_ACK : I2C_state;
+        I2C_READ      : I2C_state <= (~SCL & bitCountDone) ? I2C_READ_ACK : I2C_state;
+        I2C_READ_ACK  : I2C_state <= (~SCL) ? ((byteCountDone) ? I2C_STOP : I2C_READ) : I2C_state;
+        I2C_STOP      : I2C_state <= (SCL) ? I2C_READY : I2C_state;
+      endcase
+  end
   
   //I2C byte counter
-  always@(posedge I2CinAck or posedge I2CinStart)
-    begin
-      if(I2CinStart)
-        begin
-          byteCounter <= 3'd0;
-        end
-      else
-        begin
-          byteCounter <= byteCounter + 3'd1;
-        end
+  always@(posedge clk or posedge I2CinStart) begin
+    if(I2CinStart) begin
+      byteCounter <= 3'd0;
+    end else begin
+      byteCounter <= byteCounter + {2'd0, I2CinAck_posedge};
     end
+  end
   
   //I2C byte counter done
   always@*
-    begin
-      case(state)
-        CONFIG:      byteCountDone = (byteCounter == 3'd4);
-        CH_RES:      byteCountDone = (byteCounter == 3'd3);
-        TEMP_PTR:    byteCountDone = (byteCounter == 3'd2);
-        READ_TEMP:   byteCountDone = (byteCounter == 3'd3);
-        SET_T_BOUND: byteCountDone = (byteCounter == 3'd4);
-        default:     byteCountDone = 1'b1;
-      endcase
-    end
+    case(state)
+      CONFIG:      byteCountDone = (byteCounter == 3'd4);
+      CH_RES:      byteCountDone = (byteCounter == 3'd3);
+      TEMP_PTR:    byteCountDone = (byteCounter == 3'd2);
+      READ_TEMP:   byteCountDone = (byteCounter == 3'd3);
+      SET_T_BOUND: byteCountDone = (byteCounter == 3'd4);
+      default:     byteCountDone = 1'b1;
+    endcase
 
   //I2C bit counter
   assign bitCountDone = ~|bitCounter;
-  always@(posedge SCL) 
-    begin
-      case(I2C_state)
-        I2C_ADDRS: bitCounter <= bitCounter + 3'd1;
-        I2C_WRITE: bitCounter <= bitCounter + 3'd1;
-         I2C_READ: bitCounter <= bitCounter + 3'd1;
-          default: bitCounter <= 3'd0;
-      endcase
-    end
+  always@(posedge SCL)
+    case(I2C_state)
+      I2C_ADDRS: bitCounter <= bitCounter + {2'd0, SCL_posedge};
+      I2C_WRITE: bitCounter <= bitCounter + {2'd0, SCL_posedge};
+       I2C_READ: bitCounter <= bitCounter + {2'd0, SCL_posedge};
+        default: bitCounter <= 3'd0;
+    endcase
 
   //Divide clkI2Cx2 to get I2C clk
-  always@(posedge clkI2Cx2 or posedge rst)
-    begin
-      if(rst)
-        begin
-          SCLK <= 1'b1;
-        end
-      else
-        begin
-          SCLK <= ~SCLK;
-        end
+  always@(posedge clk or posedge rst) begin
+    if(rst) begin
+      SCLK <= 1'b1;
+    end else begin
+      SCLK <= SCLK ^ clkI2Cx2_posedge;
     end
+  end
 endmodule
