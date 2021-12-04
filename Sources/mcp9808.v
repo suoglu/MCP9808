@@ -18,8 +18,12 @@ module mcp9808(
   input clkI2Cx2,
   input [2:0] addressPins,
   //I2C pins
-  inout SCL/* synthesis keep = 1 */,
-  inout SDA/* synthesis keep = 1 */,
+  input  SCL_i,
+  output SCL_o,
+  output SCL_t,
+  input  SDA_i,
+  output SDA_o,
+  output SDA_t,
   //GPIO
   output [11:0] tempVal,
   output tempSign,
@@ -55,6 +59,7 @@ module mcp9808(
   reg I2CinStop_d, I2CinAck_d;
   wire readNwrite;
   wire [6:0] I2CAddress;
+  wire SCL, SDA;
   //Module State
   localparam SHUTDOWN = 3'b110, //Steady state for shutdown
                  IDLE = 3'b000, //Steady state
@@ -162,8 +167,12 @@ module mcp9808(
   assign inSET_T_BOUND = (state == SET_T_BOUND);
 
   //Tri-state control for I2C lines
-  assign SCL = (SCL_claim) ?    SCLK   : 1'bZ;
-  assign SDA = (SDA_claim) ? SDA_write : 1'bZ;
+  assign SCL = (SCL_claim) ?    SCLK   : SCL_i;
+  assign SDA = (SDA_claim) ? SDA_write : SDA_i;
+  assign SCL_o = SCL;
+  assign SDA_o = SDA;
+  assign SCL_t = ~SCL_claim;
+  assign SDA_t = ~SDA_claim;
   assign SCL_claim = ~I2CinReady;
   assign SDA_claim = I2CinStart | I2CinAddrs | I2CinWrite | I2CinReadAck | I2CinStop;
   assign SDA_write = (I2CinStart | I2CinReadAck | I2CinStop) ? 1'd0 : SDAsend[7];
