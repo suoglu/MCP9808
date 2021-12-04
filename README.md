@@ -30,8 +30,8 @@ Version 1 of the module `mcp9808` is a basic interface module for [MCP9808](http
 | `rst` | I | 1 | System Reset |
 | `clkI2Cx2` | I | 1 | Double I²C Clock (800 kHz) |
 | `addressPins` | I | 3 | Address pins of MCP9808 |
-| `SCL` | IO | 1 | I²C Clock |
-| `SDA` | IO | 1 | I²C Data |
+| `SCL`* | IO | 1 | I²C Clock |
+| `SDA`* | IO | 1 | I²C Data |
 | `tempVal` | O | 12 | Ambient Temperature Absolute Value (2^7...2^-4) |
 | `tempSign` | O | 1 | Ambient Temperature Sign |
 | `tempComp` | O | 3 | Boundary Comparison Results (Crit,Upper,Lower) |
@@ -43,6 +43,8 @@ Version 1 of the module `mcp9808` is a basic interface module for [MCP9808](http
 | `ready` | O | 1 | Module is ready for a new operation |
 
 I: Input  O: Output
+
+\* contain pins \_i, \_o and \_t
 
 | `tempWrite` | Register to be written |
 | :------: | :----: |
