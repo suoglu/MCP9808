@@ -5,6 +5,7 @@
  * File        : mcp9808.v                          *
  * Author      : Yigit Suoglu                       *
  * Last Edit   : 04/12/2021                         *
+ * Licence     : CERN-OHL-W                         *
  * ------------------------------------------------ *
  * Description : Interface module for MCP9808       *
  *               temperature sensor                 *

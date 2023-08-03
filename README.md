@@ -8,6 +8,7 @@
 4. Test
 5. Status Information
 6. Possible Improvements
+7. Licence
 
 [![Repo on GitLab](https://img.shields.io/badge/repo-GitLab-6C488A.svg)](https://gitlab.com/suoglu/mcp9808)
 [![Repo on GitHub](https://img.shields.io/badge/repo-GitHub-3D76C2.svg)](https://github.com/suoglu/MCP9808)
@@ -73,3 +74,7 @@ Module tested on [testboard.v](Test/testboard.v). Right button used to read a ne
 ## Possible Improvements
 
 - Implement more functionality, e.g. alert configurations
+
+## License
+
+CERN Open Hardware Licence Version 2 - Weakly Reciprocal
